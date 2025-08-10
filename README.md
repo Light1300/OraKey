@@ -82,6 +82,7 @@ using CommandHandler = std::function<std::string(const std::vector<std::string>&
 std::unordered_map<std::string, CommandHandler> commandTable;
 
 ---
+``` 
 
 ### ✅ End of Day 1 Deliverables
 ### By the end of today, you should have:
