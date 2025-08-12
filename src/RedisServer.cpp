@@ -1,102 +1,149 @@
-#include "RedisCommandHandler.h"
 #include "RedisServer.h"
+#include "RedisCommandHandler.h"
 #include "Database.h"
 
 #include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <netinet/in.h>
-#include <arpa/inet.h> 
-#include <cstring> // for strerror
-#include <cerrno>  // for errno
-#include <signal.h>
+#include <arpa/inet.h>
+#include <cstring>
+#include <cerrno>
+#include <csignal>
 
-static RedisServer* globalServer = nullptr;
+static RedisServer* g_server_ptr = nullptr;
 
-RedisServer::RedisServer(int port)
- : port(port), server_socket(-1), running(true) {
-    globalServer = this;
-    setupSignalHandler
-}
-
-void signalHandler(int signum){
-    if(globalServer){
-        std::cout<< "caught Signla"<<signal<<" , Shutting Down B!T#H... \n";
-        globalServer->shutdown();
-        //
+// Forward signal handler (C style)
+static void signal_handler(int signum) {
+    if (g_server_ptr) {
+        std::cout << "\nSignal " << signum << " received. Shutting down server...\n";
+        g_server_ptr->shutdown();
     }
-    exit(signum);
 }
 
-void RedisServer::setupSignalHandler(){
+RedisServer::RedisServer(int port) : port(port), server_socket(-1), running(true) {
+    g_server_ptr = this;
+    setupSignalHandler();
+}
 
-    signal(SIGINT, signalHandler);
-
+void RedisServer::setupSignalHandler() {
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
 }
 
 void RedisServer::shutdown() {
     running = false;
     if (server_socket != -1) {
         close(server_socket);
+        server_socket = -1;
     }
-    std::cout << "Server has been shutdown.\n";
 }
 
 void RedisServer::run() {
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0) {
-        std::cerr << "Error creating socket\n";
+        std::cerr << "Error creating socket: " << strerror(errno) << "\n";
         return;
     }
 
     int opt = 1;
     if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        std::cerr << "Error setting socket options\n";
+        std::cerr << "Error setsockopt: " << strerror(errno) << "\n";
         close(server_socket);
         return;
     }
 
     sockaddr_in serverAddr{};
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(port);
+    serverAddr.sin_port = htons(static_cast<uint16_t>(port));
     serverAddr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(server_socket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        std::cerr << "Error binding server socket: " << strerror(errno) << "\n";
+    if (bind(server_socket, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) < 0) {
+        std::cerr << "Error binding: " << strerror(errno) << "\n";
         close(server_socket);
         return;
     }
 
     if (listen(server_socket, 10) < 0) {
-        std::cerr << "Error: Server socket is not listening: " << strerror(errno) << "\n";
+        std::cerr << "Error listening: " << strerror(errno) << "\n";
         close(server_socket);
         return;
     }
 
-    std::cout << "Server is listening on port " << port << std::endl;
+    std::cout << "Server listening on port " << port << "\n";
+
+    // single Database instance & command handler
+    Database &db = Database::getInstance();
+    RedisCommandHandler handler(db);
 
     while (running) {
         sockaddr_in clientAddr{};
         socklen_t clientlen = sizeof(clientAddr);
-
-        int clientSocket = accept(server_socket, (struct sockaddr*)&clientAddr, &clientlen);
-        if (clientSocket < 0) {
-            if (errno == EINTR) continue; // retry if interrupted
-            std::cerr << "Accept failed: " << strerror(errno) << "\n";
+        int clientSock = accept(server_socket, reinterpret_cast<sockaddr*>(&clientAddr), &clientlen);
+        if (clientSock < 0) {
+            if (errno == EINTR) continue; // interrupted, check running again
+            std::cerr << "Accept error: " << strerror(errno) << "\n";
             continue;
         }
 
-        std::cout << "Connected to Client: " << inet_ntoa(clientAddr.sin_addr)
-                  << ":" << ntohs(clientAddr.sin_port) << "\n";
+        char ipbuf[INET_ADDRSTRLEN] = {0};
+        inet_ntop(AF_INET, &clientAddr.sin_addr, ipbuf, sizeof(ipbuf));
+        uint16_t clientPort = ntohs(clientAddr.sin_port);
+        std::cout << "Client connected: " << ipbuf << ":" << clientPort << "\n";
 
-        // For now, just close connection immediately
-        close(clientSocket);
+        // Per-client loop: read lines / raw RESP and process until client disconnects or QUIT
+        constexpr size_t BUF_SZ = 4096;
+        std::string bufferStr;
+        bufferStr.reserve(4096);
+        char buf[BUF_SZ];
+
+        bool clientAlive = true;
+        while (clientAlive && running) {
+            ssize_t n = recv(clientSock, buf, BUF_SZ, 0);
+            if (n > 0) {
+                bufferStr.append(buf, static_cast<size_t>(n));
+                // For simplicity: handle one command per read. In production you'd parse incrementally.
+                std::string reply = handler.processCommand(bufferStr);
+
+                // send reply fully
+                size_t sent = 0;
+                const char* out = reply.c_str();
+                size_t tosend = reply.size();
+                while (sent < tosend) {
+                    ssize_t w = send(clientSock, out + sent, tosend - sent, 0);
+                    if (w <= 0) { clientAlive = false; break; }
+                    sent += static_cast<size_t>(w);
+                }
+
+                // If command was QUIT then close
+                // naive check: if command was "QUIT" or reply == "+OK\r\n"
+                // Better approach: parse tokens and check first token; but for now:
+                if (!bufferStr.empty()) {
+                    auto toks = RedisCommandHandler::parseRespCommand(bufferStr);
+                    if (!toks.empty() && toks[0] == "QUIT") {
+                        clientAlive = false;
+                    }
+                }
+
+                bufferStr.clear(); // clear processed buffer
+            } else if (n == 0) {
+                // connection closed by client
+                clientAlive = false;
+            } else {
+                if (errno == EINTR) continue;
+                std::cerr << "Recv error: " << strerror(errno) << "\n";
+                clientAlive = false;
+            }
+        } // end client loop
+
+        close(clientSock);
+        std::cout << "Client disconnected: " << ipbuf << ":" << clientPort << "\n";
+    } // end accept loop
+
+    // On exit attempt to dump DB (best-effort)
+    if (!Database::getInstance().dump("dump.my_rdb")) {
+        std::cerr << "Error dumping database\n";
+    } else {
+        std::cout << "Database dumped to dump.my_rdb\n";
     }
-
-    // this was to simply dump everything in databse if any shutdown happens
-    if(Database::getInstance.dump("dump.my_rdb"))
-    std::cout<<"Database dumped to dump.my_rdb\n";
-    else
-    std::corr<<"Error:: dumping database"<<endl;
-
 }
