@@ -96,3 +96,14 @@ std::unordered_map<std::string, CommandHandler> commandTable;
 - Unit tests for RESP parser passing.
 
 - Verified client interaction using redis-cli or Python test.
+
+
+
+
+
+### RUN IT WITH the following COMMAND
+``` BASH
+mkdir -p build
+g++ -std=c++17 -pthread -Iinclude $(find src -name "*.cpp") -o build/my_redis_server
+./build/my_redis_server 6380
+```
