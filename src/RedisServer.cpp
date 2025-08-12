@@ -1,5 +1,7 @@
-// #include "RedisServer.h"
-#include "include/RedisServer.h"
+#include "RedisCommandHandler.h"
+#include "RedisServer.h"
+#include "Database.h"
+
 #include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -7,12 +9,29 @@
 #include <arpa/inet.h> 
 #include <cstring> // for strerror
 #include <cerrno>  // for errno
+#include <signal.h>
 
 static RedisServer* globalServer = nullptr;
 
 RedisServer::RedisServer(int port)
-    : port(port), server_socket(-1), running(true) {
+ : port(port), server_socket(-1), running(true) {
     globalServer = this;
+    setupSignalHandler
+}
+
+void signalHandler(int signum){
+    if(globalServer){
+        std::cout<< "caught Signla"<<signal<<" , Shutting Down B!T#H... \n";
+        globalServer->shutdown();
+        //
+    }
+    exit(signum);
+}
+
+void RedisServer::setupSignalHandler(){
+
+    signal(SIGINT, signalHandler);
+
 }
 
 void RedisServer::shutdown() {
@@ -73,4 +92,11 @@ void RedisServer::run() {
         // For now, just close connection immediately
         close(clientSocket);
     }
+
+    // this was to simply dump everything in databse if any shutdown happens
+    if(Database::getInstance.dump("dump.my_rdb"))
+    std::cout<<"Database dumped to dump.my_rdb\n";
+    else
+    std::corr<<"Error:: dumping database"<<endl;
+
 }

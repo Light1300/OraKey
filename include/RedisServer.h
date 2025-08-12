@@ -14,6 +14,9 @@ private:
     int port;
     int server_socket;
     std::atomic<bool> running;
+
+    // setup singla handeling for smooth shutdown 
+    void setupSignalHandler();
 };
 
 #endif
