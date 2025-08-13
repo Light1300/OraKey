@@ -1,4 +1,3 @@
-K temp 123
-K name Sarvesh
-K count 100
-L fruits mango apple banana mango apple banana mango apple banana mango apple banana mango
+K fruits apple
+K cat dog
+L fruits donkey

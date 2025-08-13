@@ -1,109 +1,209 @@
-# OraKey – Day 1: Project Skeleton + Networking + RESP Parser
-
-## 🎯 Day 1 Goal
-Build a **working TCP server in C++** that:
-1. Accepts multiple client connections (non-blocking, epoll-based).
-2. Reads and parses **RESP** (Redis Serialization Protocol) requests.
-3. Responds correctly to at least:
-   - `PING` → `+PONG\r\n`
-   - `ECHO <message>` → `<message>` in RESP format.
+Alright — I’ll prepare a **technical README** for your current Redis clone, strictly covering the features you’ve already implemented and detailing compilation, usage, and test cases.
 
 ---
 
+## **README.md**
 
-## 🗂️ Today's Tasks
+```markdown
+# Minimal Redis Clone (C++17)
 
-
-### 2. Configuration
-- [ ] Add basic config constants:
-- Default port: `6379`
-- (Optional) AOF file path (not used yet)
-- Log level (INFO/WARN/ERROR)
+A lightweight Redis-like key-value store implemented in C++17 with a custom RESP protocol parser, supporting a subset of Redis commands.  
+This project demonstrates TCP networking, concurrent client handling, and basic in-memory database management.
 
 ---
 
-### 3. Networking – TCP Server
-- [ ] Create server socket:
-- `socket()`, `bind()`, `listen()`.
-- Set to **non-blocking** mode.
-- [ ] Use **epoll** for event-driven IO:
-- `epoll_create1()`
-- Register server socket with `EPOLLIN`.
-- [ ] Accept new clients:
-- On accept, set client socket to **non-blocking**.
-- Maintain `Connection` struct:
-  ```cpp
-  struct Connection {
-      int fd;
-      std::string readBuffer;
-      std::string writeBuffer;
-  };
-  ```
-- Store connections in a `std::unordered_map<int, Connection>`.
+## Features Implemented
+
+- **RESP Protocol Parsing** – Supports standard Redis serialization protocol for client communication.
+- **Supported Commands**:
+  - `PING` → Health check (`+PONG`)
+  - `ECHO <message>` → Returns message
+  - `SET <key> <value>` → Store string value
+  - `GET <key>` → Retrieve string value
+  - `DEL <key>` → Delete key
+  - `INCR <key>` → Increment integer value (creates if absent)
+  - `LPUSH <key> <value>` → Push value to start of list
+  - `LPOP <key>` → Pop value from start of list
+- **Multi-client Support** – Uses `std::thread` for concurrent client connections.
+- **Graceful Error Handling** – RESP-compliant error messages for unknown commands.
 
 ---
 
-### 4. Reading Data
-- [ ] Implement robust read loop:
-- Read available bytes into `readBuffer`.
-- Try parsing RESP messages from buffer.
-- If incomplete, wait for more data.
-- If complete, dispatch to command handler.
+## Directory Structure
+
+```
+
+.
+├── include
+│   ├── Database.h
+│   ├── RedisCommandHandler.h
+│   └── RedisServer.h
+├── src
+│   ├── Database.cpp
+│   ├── RedisCommandHandler.cpp
+│   ├── RedisServer.cpp
+│   └── main.cpp
+└── README.md
+
+````
 
 ---
 
-### 5. RESP Parser
-- [ ] Parse **RESP types**:
-- Simple String (`+OK\r\n`)
-- Error (`-ERR msg\r\n`)
-- Integer (`:123\r\n`)
-- Bulk String (`$<len>\r\n<data>\r\n`)
-- Array (`*<n>\r\n...`)
-- [ ] Implement **incremental parsing**:
-- Function returns:
-  - Parsed command as `std::vector<std::string>`, OR
-  - Signal "incomplete" if more bytes needed.
-- [ ] Implement reply serializer:
-- Simple String: `+OK\r\n`
-- Error: `-ERR msg\r\n`
-- Integer: `:<num>\r\n`
-- Bulk String: `$<len>\r\n<data>\r\n`
-- Array: `*<n>\r\n...`
+## Compilation
+
+Ensure you have **g++ (C++17)** installed.  
+Run:
+
+```bash
+g++ -std=c++17 -pthread -Iinclude src/*.cpp -o redis_server
+````
 
 ---
 
-### 6. Command Handlers
-- [ ] Implement:
-- `PING` → `+PONG\r\n`
-- `ECHO <message>` → bulk string reply with `<message>`
-- [ ] Command dispatch table:
-```cpp
-using CommandHandler = std::function<std::string(const std::vector<std::string>&)>;
-std::unordered_map<std::string, CommandHandler> commandTable;
+## Running the Server
+
+```bash
+./redis_server
+```
+
+The server starts on the configured port (default: **6379**).
+It listens for TCP client connections using the Redis protocol.
 
 ---
-``` 
 
-### ✅ End of Day 1 Deliverables
-### By the end of today, you should have:
+## Connecting to the Server
 
-- C++ TCP server running on port 6379 using epoll.
+You can use the official `redis-cli` or `netcat` (`nc`) for testing.
 
-- RESP parser fully functional (arrays + bulk strings at minimum).
+### Using `redis-cli`:
 
-- PING/ECHO commands working end-to-end.
+```bash
+redis-cli -p 6379
+```
 
-- Unit tests for RESP parser passing.
+### Using `nc` (Netcat):
 
-- Verified client interaction using redis-cli or Python test.
+```bash
+nc 127.0.0.1 6379
+```
 
+Commands must be sent in RESP format or as plain text for testing.
 
+---
 
+## Example Test Cases
 
+### **PING**
 
-### RUN IT WITH the following COMMAND
-``` BASH
-mkdir -p build
-g++ -std=c++17 -pthread -Iinclude $(find src -name "*.cpp") -o build/my_redis_server
-./build/my_redis_server 6380
+```
+PING
+```
+
+Response:
+
+```
++PONG
+```
+
+### **ECHO**
+
+```
+ECHO HelloWorld
+```
+
+Response:
+
+```
+$10
+HelloWorld
+```
+
+### **SET / GET**
+
+```
+SET name Sarvesh
+GET name
+```
+
+Response:
+
+```
++OK
+$7
+Sarvesh
+```
+
+### **DEL**
+
+```
+DEL name
+```
+
+Response:
+
+```
+:1
+```
+
+### **INCR**
+
+```
+SET counter 10
+INCR counter
+```
+
+Response:
+
+```
+:11
+```
+
+### **LPUSH / LPOP**
+
+```
+LPUSH mylist first
+LPUSH mylist second
+LPOP mylist
+```
+
+Response:
+
+```
+:1
+:2
+$6
+second
+```
+
+---
+
+## Limitations
+
+* No key expiry (`EXPIRE`) yet.
+* No persistence to disk.
+* No advanced data structures beyond strings and lists.
+* No authentication (`AUTH`) implemented.
+
+---
+
+## Notes
+
+* This server accepts **both RESP and plain text commands** for convenience.
+* Multi-client support is available but not yet optimized for high concurrency.
+* All data is stored **in-memory only**.
+
+---
+
+## Author
+
+Sarvesh Patil – Minimal Redis server implementation in C++17.
+
+```
+
+---
+
+If you want, I can also add a **section in the README on RESP command format** so even raw TCP testers can interact without `redis-cli`.  
+That way it’s fully self-contained for testing.  
+
+Do you want me to add that section?
 ```
