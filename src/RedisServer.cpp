@@ -13,7 +13,6 @@
 
 static RedisServer* g_server_ptr = nullptr;
 
-// Forward signal handler (C style)
 static void signal_handler(int signum) {
     if (g_server_ptr) {
         std::cout << "\nSignal " << signum << " received. Shutting down server...\n";
@@ -27,7 +26,7 @@ RedisServer::RedisServer(int port) : port(port), server_socket(-1), running(true
 }
 
 void RedisServer::setupSignalHandler() {
-    std::signal(SIGINT, signal_handler);
+    std::signal(SIGINT,  signal_handler);
     std::signal(SIGTERM, signal_handler);
 }
 
@@ -72,7 +71,6 @@ void RedisServer::run() {
 
     std::cout << "Server listening on port " << port << "\n";
 
-    // single Database instance & command handler
     Database &db = Database::getInstance();
     RedisCommandHandler handler(db);
 
@@ -81,7 +79,7 @@ void RedisServer::run() {
         socklen_t clientlen = sizeof(clientAddr);
         int clientSock = accept(server_socket, reinterpret_cast<sockaddr*>(&clientAddr), &clientlen);
         if (clientSock < 0) {
-            if (errno == EINTR) continue; // interrupted, check running again
+            if (errno == EINTR) continue;
             std::cerr << "Accept error: " << strerror(errno) << "\n";
             continue;
         }
@@ -91,7 +89,6 @@ void RedisServer::run() {
         uint16_t clientPort = ntohs(clientAddr.sin_port);
         std::cout << "Client connected: " << ipbuf << ":" << clientPort << "\n";
 
-        // Per-client loop: read lines / raw RESP and process until client disconnects or QUIT
         constexpr size_t BUF_SZ = 4096;
         std::string bufferStr;
         bufferStr.reserve(4096);
@@ -102,10 +99,11 @@ void RedisServer::run() {
             ssize_t n = recv(clientSock, buf, BUF_SZ, 0);
             if (n > 0) {
                 bufferStr.append(buf, static_cast<size_t>(n));
-                // For simplicity: handle one command per read. In production you'd parse incrementally.
+
+                // For simplicity, treat buffer as one complete command
                 std::string reply = handler.processCommand(bufferStr);
 
-                // send reply fully
+                // send reply
                 size_t sent = 0;
                 const char* out = reply.c_str();
                 size_t tosend = reply.size();
@@ -115,32 +113,27 @@ void RedisServer::run() {
                     sent += static_cast<size_t>(w);
                 }
 
-                // If command was QUIT then close
-                // naive check: if command was "QUIT" or reply == "+OK\r\n"
-                // Better approach: parse tokens and check first token; but for now:
-                if (!bufferStr.empty()) {
-                    auto toks = RedisCommandHandler::parseRespCommand(bufferStr);
-                    if (!toks.empty() && toks[0] == "QUIT") {
-                        clientAlive = false;
-                    }
+                // QUIT detection
+                auto toks = RedisCommandHandler::parseRespCommand(bufferStr);
+                if (!toks.empty()) {
+                    std::string c = toks[0];
+                    for (auto &ch : c) ch = static_cast<char>(std::toupper((unsigned char)ch));
+                    if (c == "QUIT" || c == "EXIT") clientAlive = false;
                 }
-
-                bufferStr.clear(); // clear processed buffer
+                bufferStr.clear();
             } else if (n == 0) {
-                // connection closed by client
-                clientAlive = false;
+                clientAlive = false; // client closed
             } else {
                 if (errno == EINTR) continue;
                 std::cerr << "Recv error: " << strerror(errno) << "\n";
                 clientAlive = false;
             }
-        } // end client loop
+        }
 
         close(clientSock);
         std::cout << "Client disconnected: " << ipbuf << ":" << clientPort << "\n";
-    } // end accept loop
+    }
 
-    // On exit attempt to dump DB (best-effort)
     if (!Database::getInstance().dump("dump.my_rdb")) {
         std::cerr << "Error dumping database\n";
     } else {

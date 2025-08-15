@@ -12,7 +12,7 @@ std::vector<std::string> RedisCommandHandler::parseRespCommand(const std::string
     std::vector<std::string> tokens;
     if (input.empty()) return tokens;
 
-    // Plain-text fallback (useful for telnet during early testing)
+    // Plain-text fallback (useful with telnet)
     if (input[0] != '*') {
         std::istringstream iss(input);
         std::string token;
@@ -49,7 +49,6 @@ std::vector<std::string> RedisCommandHandler::parseRespCommand(const std::string
     return tokens;
 }
 
-// Constructor - store reference to Database instance (usually Database::getInstance())
 RedisCommandHandler::RedisCommandHandler(Database &db) : db_(db) {}
 
 // Helpers to format RESP replies
@@ -64,6 +63,13 @@ static std::string okReply() {
 }
 static std::string nilBulk() {
     return "$-1\r\n";
+}
+static std::string arrayReply(const std::vector<std::string> &arr) {
+    std::string out = "*" + std::to_string(arr.size()) + "\r\n";
+    for (auto &s : arr) {
+        out += "$" + std::to_string(s.size()) + "\r\n" + s + "\r\n";
+    }
+    return out;
 }
 
 // Process commands using the database reference
@@ -135,8 +141,51 @@ std::string RedisCommandHandler::processCommand(const std::string &commandLine) 
         return nilBulk();
     }
 
+    // LRANGE key start stop
+    if (cmd == "LRANGE") {
+        if (tokens.size() < 4) return "-ERR wrong number of arguments for 'lrange'\r\n";
+        try {
+            int start = std::stoi(tokens[2]);
+            int stop  = std::stoi(tokens[3]);
+            auto values = db_.lrange(tokens[1], start, stop);
+            return arrayReply(values);
+        } catch (...) {
+            return "-ERR value is not an integer or out of range\r\n";
+        }
+    }
+
+    // EXISTS key
+    if (cmd == "EXISTS") {
+        if (tokens.size() < 2) return "-ERR wrong number of arguments for 'exists'\r\n";
+        return intReply(db_.exists(tokens[1]) ? 1 : 0);
+    }
+
+    // EXPIRE key seconds
+    if (cmd == "EXPIRE") {
+        if (tokens.size() < 3) return "-ERR wrong number of arguments for 'expire'\r\n";
+        try {
+            int seconds = std::stoi(tokens[2]);
+            return intReply(db_.expire(tokens[1], seconds) ? 1 : 0);
+        } catch (...) {
+            return "-ERR value is not an integer or out of range\r\n";
+        }
+    }
+
+    // TTL key
+    if (cmd == "TTL") {
+        if (tokens.size() < 2) return "-ERR wrong number of arguments for 'ttl'\r\n";
+        return intReply(db_.ttl(tokens[1]));
+    }
+
+    // KEYS pattern
+    if (cmd == "KEYS") {
+        if (tokens.size() < 2) return "-ERR wrong number of arguments for 'keys'\r\n";
+        auto arr = db_.keys(tokens[1]);
+        return arrayReply(arr);
+    }
+
     // QUIT (client side disconnect)
-    if (cmd == "QUIT") {
+    if (cmd == "QUIT" || cmd == "EXIT") {
         return okReply();
     }
 

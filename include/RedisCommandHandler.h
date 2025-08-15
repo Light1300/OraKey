@@ -3,19 +3,17 @@
 
 #include <string>
 #include <vector>
-#include <optional>
 
 class Database; // forward declaration
 
 class RedisCommandHandler {
 public:
-    // Construct with a reference to the in-memory database
     explicit RedisCommandHandler(Database &db);
 
     // Parse RESP or plain text commands into vector<string>
     static std::vector<std::string> parseRespCommand(const std::string &input);
 
-    // Process a single command line (RESP or plain text) and return a RESP-formatted reply
+    // Process one command (RESP or plain text) -> RESP reply
     std::string processCommand(const std::string &commandLine);
 
 private:

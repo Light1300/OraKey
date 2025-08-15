@@ -10,7 +10,7 @@ int main(int argc, char* argv[]) {
         try { port = std::stoi(argv[1]); } catch (...) { std::cerr << "Invalid port, using 6380\n"; }
     }
 
-    // Background persistence thread (every 300 seconds)
+    // Background: periodic DB dump (every 300s)
     std::thread persistenceThread([](){
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(300));
@@ -22,6 +22,18 @@ int main(int argc, char* argv[]) {
         }
     });
     persistenceThread.detach();
+
+    // Background: expiry cleanup (every 1s)
+    std::thread expiryThread([](){
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            Database::getInstance().purgeExpired();
+        }
+    });
+    expiryThread.detach();
+
+    // Optional: load previous dump (best-effort)
+    Database::getInstance().load("dump.my_rdb");
 
     RedisServer server(port);
     server.run();

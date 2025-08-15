@@ -8,13 +8,8 @@ public:
     explicit RedisServer(int port);
     ~RedisServer() = default;
 
-    // Start accept loop (blocking)
     void run();
-
-    // Request a graceful shutdown (can be called from signal handler)
     void shutdown();
-
-    // Set up OS signal handler (SIGINT)
     void setupSignalHandler();
 
 private:
